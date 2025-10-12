@@ -6,3 +6,10 @@ escolherVPC(){
         --output text)
     echo "$vpc_id"
 }
+
+escolherSubNet(){
+    local subnet_id=$(aws ec2 describe-subnets \
+        --query "Subnets[?VpcId=='$VPC_ID'].[SubnetId]" \
+        --output text | head -n1)
+    echo "$subnet_id"
+}
