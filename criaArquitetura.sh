@@ -165,3 +165,25 @@ alocarIpElastico(){
         echo "$EIP"
     fi
 }
+
+VPC_ID=$(escolherVPC 0)
+
+SUBNET_ID=$(escolherSubNet)
+
+definirParDeChaves "ChaveInstanciaDB" "instancia-db" &
+definirParDeChaves "ChaveInstanciaWEB" "instancia-web" &
+wait
+
+SG_ID_DB=$(definirGrupoDeSeguranca "GrupoSegurancaDB" "banco de dados" "db" 3306)
+SG_ID_WEB=$(definirGrupoDeSeguranca "GrupoSegurancaWEB" "site" "web" 80)
+
+ARQUIVO="$(criarScriptDeInicializacao)"
+
+ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $ARQUIVO $SG_ID_DB)
+ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $ARQUIVO $SG_ID_WEB)
+
+aws ec2 wait instance-running --instance-ids $ID_WEB
+aws ec2 wait instance-running --instance-ids $ID_DB
+
+alocarIpElastico $ID_DB
+alocarIpElastico $ID_WEB
