@@ -13,3 +13,37 @@ escolherSubNet(){
         --output text | head -n1)
     echo "$subnet_id"
 }
+
+definirParDeChaves(){
+    aws ec2 describe-key-pairs --key-names "$1" --query "KeyPairs[0].KeyName" --output text
+    if [ $? -eq 0 ]; then
+        if [ ! -f "$1.pem" ]; then
+            aws ec2 delete-key-pair --key-name "$1"
+
+            local APAGAR_DB=$(aws ec2 describe-instances \
+                --filters "Name=tag:Name,Values=$2" \
+                    "Name=key-name,Values=$1" \
+                    "Name=instance-state-name,Values=running" \
+                --query "Reservations[].Instances[0].InstanceId" \
+                --output text)
+
+            if [ $? -eq 0 ]; then
+                aws ec2 terminate-instances --instance-ids "$APAGAR_DB"
+            fi
+
+            aws ec2 create-key-pair \
+            --key-name "$1" \
+            --region us-east-1 \
+            --query 'KeyMaterial' \
+            --output text > "$1.pem"
+        fi
+    else
+        rm -f "$1.pem"
+        aws ec2 create-key-pair \
+        --key-name "$1" \
+        --region us-east-1 \
+        --query 'KeyMaterial' \
+        --output text > "$1.pem"
+    fi 
+    chmod 400 "$1.pem"
+}
