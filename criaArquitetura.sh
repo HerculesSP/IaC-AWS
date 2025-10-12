@@ -107,3 +107,29 @@ criarScriptDeInicializacao(){
 
 EOF
 }
+
+criarInstancia(){
+    INSTANCIA_ID=$(aws ec2 describe-instances \
+                    --filters "Name=tag:Name,Values=instancia-$1" \
+                             "Name=key-name,Values=$2" \
+                             "Name=instance-state-name,Values=running" \
+                    --query "Reservations[].Instances[0].InstanceId" \
+                    --output text)
+    
+    if [ $? -ne 0 ] || [ -z "$INSTANCIA_ID" ]; then
+        INSTANCIA_ID=$(aws ec2 run-instances \
+            --image-id "$3" \
+            --count 1 \
+            --security-group-ids "$6" \
+            --instance-type "$4" \
+            --subnet-id "$SUBNET_ID" \
+            --key-name "$2" \
+            --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":20,"VolumeType":"gp3","DeleteOnTermination":true}}]' \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=instancia-$1}]" \
+            --user-data file://"$5.txt" \
+            --query 'Instances[0].InstanceId' \
+            --output text
+        )
+    fi
+    echo "$INSTANCIA_ID"
+}
