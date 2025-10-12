@@ -47,3 +47,38 @@ definirParDeChaves(){
     fi 
     chmod 400 "$1.pem"
 }
+
+definirGrupoDeSeguranca(){
+    SG_ID=$(aws ec2 describe-security-groups \
+        --query "SecurityGroups[?GroupName=='$1'].GroupId" \
+        --output text)
+    
+    if [ $? -ne 0 ]; then
+        SG_ID=$(aws ec2 create-security-group \
+        --group-name "$1" \
+        --vpc-id $VPC_ID \
+        --description "Grupo de seguranca do $2" \
+        --tag-specifications "ResourceType=security-group,Tags=[{Key=Name,Value=sg-$3}]" \
+        --query 'GroupId' \
+        --output text)
+        
+        aws ec2 authorize-security-group-ingress \
+        --group-id $SG_ID \
+        --ip-permissions "[
+            {
+                \"IpProtocol\": \"tcp\",
+                \"FromPort\": $4,
+                \"ToPort\": $4,
+                \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
+            },
+            {
+                \"IpProtocol\": \"tcp\",
+                \"FromPort\": 22,
+                \"ToPort\": 22,
+                \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
+            }
+        ]"
+    fi
+
+    echo "$SG_ID"
+}
