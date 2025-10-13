@@ -84,26 +84,26 @@ definirGrupoDeSeguranca(){
 }
 
 criarScriptDeInicializacao(){
-    cat << 'EOF'
-    #!/bin/bash
+    cat << EOF > inicializacao.txt
+#!/bin/bash
 
-    sudo apt-get update
-    sudo apt-get install ca-certificates curl
-    sudo install -m 0755 -d /etc/apt/keyrings
-    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-    sudo chmod a+r /etc/apt/keyrings/docker.asc
+apt-get update
+apt-get install ca-certificates curl
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
 
-    echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-    $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
-    sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt-get update
+echo \
+"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+$(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+tee /etc/apt/sources.list.d/docker.list > /dev/null
+apt-get update
 
-    sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-    sudo groupadd docker
-    sudo usermod -aG docker $USER
-    newgrp docker
+groupadd docker
+usermod -aG docker $USER
+newgrp docker
 
 EOF
 }
@@ -120,13 +120,13 @@ criarInstancia(){
         INSTANCIA_ID=$(aws ec2 run-instances \
             --image-id "$3" \
             --count 1 \
-            --security-group-ids "$6" \
+            --security-group-ids "$5" \
             --instance-type "$4" \
             --subnet-id "$SUBNET_ID" \
             --key-name "$2" \
             --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":20,"VolumeType":"gp3","DeleteOnTermination":true}}]' \
             --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=instancia-$1}]" \
-            --user-data file://"$5.txt" \
+            --user-data "file://inicializacao.txt" \
             --query 'Instances[0].InstanceId' \
             --output text
         )
@@ -135,55 +135,58 @@ criarInstancia(){
 }
 
 alocarIpElastico(){
-    local IP=$(aws ec2 describe-addresses \
-        --query "Addresses[?InstanceId=='$1'].PublicIp" \
+    local instance_id=$1
+    local IP
+    local EIP
+
+    IP=$(aws ec2 describe-addresses \
+        --query "Addresses[?InstanceId=='$instance_id'].PublicIp" \
         --output text)
-    
+
     if [ -n "$IP" ]; then
         echo "$IP"
-    else
-        local EIP=$(aws ec2 describe-addresses --query "Addresses[?AssociationId==null].PublicIp | [0]" --output text)
-        if [ $? -ne 0 ] || [ "$IP" = "None" ]; then
-            aws ec2 associate-address \
-                --instance-id "$1" \
-                --public-ip "$EIP" \
-                --query 'AssociationId' \
-                --output text
-        else
-            local EIP=$(aws ec2 allocate-address \
-                --domain vpc \
-                --query 'PublicIp' \
-                --output text)
-            
-            aws ec2 associate-address \
-                --instance-id "$1" \
-                --public-ip "$EIP" \
-                --query 'AssociationId' \
-                --output text
-            
-        fi
-        echo "$EIP"
+        return
     fi
+
+    EIP=$(aws ec2 describe-addresses \
+        --query "Addresses[?AssociationId==null].PublicIp | [0]" \
+        --output text)
+
+    if [ -z "$EIP" ]; then
+        EIP=$(aws ec2 allocate-address \
+            --domain vpc \
+            --query 'PublicIp' \
+            --output text)
+    fi
+
+    aws ec2 associate-address \
+        --instance-id "$instance_id" \
+        --public-ip "$EIP" \
+        --query 'AssociationId' \
+        --output text
+
+    echo "$EIP"
 }
 
 VPC_ID=$(escolherVPC 0)
 
 SUBNET_ID=$(escolherSubNet)
 
-definirParDeChaves "ChaveInstanciaDB" "instancia-db" &
-definirParDeChaves "ChaveInstanciaWEB" "instancia-web" &
-wait
+definirParDeChaves "ChaveInstanciaDB" "instancia-db" 
+definirParDeChaves "ChaveInstanciaWEB" "instancia-web" 
 
 SG_ID_DB=$(definirGrupoDeSeguranca "GrupoSegurancaDB" "banco de dados" "db" 3306)
 SG_ID_WEB=$(definirGrupoDeSeguranca "GrupoSegurancaWEB" "site" "web" 80)
 
 ARQUIVO="$(criarScriptDeInicializacao)"
 
-ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $ARQUIVO $SG_ID_DB)
-ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $ARQUIVO $SG_ID_WEB)
+ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $SG_ID_DB)
+ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $SG_ID_WEB)
 
 aws ec2 wait instance-running --instance-ids $ID_WEB
 aws ec2 wait instance-running --instance-ids $ID_DB
+
+rm inicializacao.txt
 
 alocarIpElastico $ID_DB
 alocarIpElastico $ID_WEB
