@@ -135,37 +135,35 @@ criarInstancia(){
 }
 
 alocarIpElastico(){
-    local instance_id=$1
-    local IP
-    local EIP
-
-    IP=$(aws ec2 describe-addresses \
-        --query "Addresses[?InstanceId=='$instance_id'].PublicIp" \
+    local IP=$(aws ec2 describe-addresses \
+        --query "Addresses[?InstanceId=='$1'].PublicIp" \
         --output text)
-
+    
     if [ -n "$IP" ]; then
         echo "$IP"
-        return
+    else
+        local EIP=$(aws ec2 describe-addresses --query "Addresses[?AssociationId==null].PublicIp | [0]" --output text)
+        if [ $? -ne 0 ] || [ "$IP" = "None" ]; then
+            aws ec2 associate-address \
+                --instance-id "$1" \
+                --public-ip "$EIP" \
+                --query 'AssociationId' \
+                --output text
+        else
+            local EIP=$(aws ec2 allocate-address \
+                --domain vpc \
+                --query 'PublicIp' \
+                --output text)
+            
+            aws ec2 associate-address \
+                --instance-id "$1" \
+                --public-ip "$EIP" \
+                --query 'AssociationId' \
+                --output text
+            
+        fi
+        echo "$EIP"
     fi
-
-    EIP=$(aws ec2 describe-addresses \
-        --query "Addresses[?AssociationId==null].PublicIp | [0]" \
-        --output text)
-
-    if [ -z "$EIP" ]; then
-        EIP=$(aws ec2 allocate-address \
-            --domain vpc \
-            --query 'PublicIp' \
-            --output text)
-    fi
-
-    aws ec2 associate-address \
-        --instance-id "$instance_id" \
-        --public-ip "$EIP" \
-        --query 'AssociationId' \
-        --output text
-
-    echo "$EIP"
 }
 
 VPC_ID=$(escolherVPC 0)
