@@ -87,8 +87,8 @@ criarScriptDeInicializacao(){
     cat << EOF > inicializacao.txt
 #!/bin/bash
 
-apt-get update
-apt-get install ca-certificates curl
+apt-get update -y
+apt-get install -y ca-certificates curl
 install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
 chmod a+r /etc/apt/keyrings/docker.asc
@@ -99,7 +99,7 @@ $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
 tee /etc/apt/sources.list.d/docker.list > /dev/null
 apt-get update
 
-apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 groupadd docker
 usermod -aG docker $USER
@@ -178,7 +178,7 @@ definirParDeChaves "ChaveInstanciaWEB" "instancia-web"
 SG_ID_DB=$(definirGrupoDeSeguranca "GrupoSegurancaDB" "banco de dados" "db" 3306)
 SG_ID_WEB=$(definirGrupoDeSeguranca "GrupoSegurancaWEB" "site" "web" 80)
 
-ARQUIVO="$(criarScriptDeInicializacao)"
+criarScriptDeInicializacao
 
 ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $SG_ID_DB)
 ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $SG_ID_WEB)
