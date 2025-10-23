@@ -170,7 +170,7 @@ alocarIpElastico(){
 criarBucket(){
     if ! aws s3api list-buckets --query "Buckets[].Name" --output text | tr '\t' '\n' | grep -q "^$1"; then
         while true; do
-            bucket_name="${1}$(date +%s)"
+            bucket_name="${1}-$(date +%s)"
             aws s3 mb s3://$bucket_name
             if [ $? -eq 0 ]; then
                 break
@@ -204,4 +204,6 @@ rm inicializacao.txt
 IP_DB=$(alocarIpElastico $ID_DB)
 IP_WEB=$(alocarIpElastico $ID_WEB)
 
-criarBucket() "black-screen-raw"
+criarBucket "black-screen-raw"
+criarBucket "black-screen-trusted"
+criarBucket "black-screen-client"
