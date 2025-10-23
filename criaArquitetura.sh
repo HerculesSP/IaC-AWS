@@ -49,39 +49,56 @@ definirParDeChaves(){
     chmod 400 "$1.pem"
 }
 
-definirGrupoDeSeguranca(){
-    SG_ID=$(aws ec2 describe-security-groups \
-        --query "SecurityGroups[?GroupName=='$1'].GroupId" \
-        --output text)
-    
-    if [ $? -ne 0 ]; then
-        SG_ID=$(aws ec2 create-security-group \
-        --group-name "$1" \
-        --vpc-id $VPC_ID \
-        --description "Grupo de seguranca do $2" \
-        --tag-specifications "ResourceType=security-group,Tags=[{Key=Name,Value=sg-$3}]" \
-        --query 'GroupId' \
-        --output text)
-        
-        aws ec2 authorize-security-group-ingress \
-        --group-id $SG_ID \
-        --ip-permissions "[
-            {
-                \"IpProtocol\": \"tcp\",
-                \"FromPort\": $4,
-                \"ToPort\": $4,
-                \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
-            },
-            {
-                \"IpProtocol\": \"tcp\",
-                \"FromPort\": 22,
-                \"ToPort\": 22,
-                \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
-            }
-        ]"
+criarGrupoDeSeguranca() {
+    local nome_grupo="$1"
+    local descricao="$2"
+    local vpc_id="$3"
+
+    local sg_id=$(aws ec2 describe-security-groups \
+        --filters "Name=group-name,Values=${nome_grupo}" "Name=vpc-id,Values=${vpc_id}" \
+        --query "SecurityGroups[0].GroupId" \
+        --output text 2>/dev/null)
+
+    if [ "$sg_id" == "None" ] || [ -z "$sg_id" ]; then
+        sg_id=$(aws ec2 create-security-group \
+            --group-name "${nome_grupo}" \
+            --description "${descricao}" \
+            --vpc-id "${vpc_id}" \
+            --query "GroupId" \
+            --output text)
+        echo "Grupo de segurança criado: ${sg_id}"
+    else
+        echo "Grupo de segurança existente: ${sg_id}"
     fi
 
-    echo "$SG_ID"
+    echo "$sg_id"
+}
+
+adicionarRegraAoGrupo() {
+    local sg_id="$1"
+    local porta="$2"
+    local protocolo="${3:-tcp}" 
+
+    local regra_existente=$(aws ec2 describe-security-groups \
+        --group-ids "$sg_id" \
+        --query "SecurityGroups[0].IpPermissions[?FromPort==\`${porta}\` && ToPort==\`${porta}\`].IpRanges[?CidrIp=='0.0.0.0/0'] | [0]" \
+        --output text 2>/dev/null)
+
+    if [ "$regra_existente" == "None" ] || [ -z "$regra_existente" ]; then
+        echo "Adicionando regra de entrada: porta $porta"
+        aws ec2 authorize-security-group-ingress \
+            --group-id "$sg_id" \
+            --ip-permissions "[
+                {
+                    \"IpProtocol\": \"$protocolo\",
+                    \"FromPort\": $porta,
+                    \"ToPort\": $porta,
+                    \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
+                }
+            ]"
+    else
+        echo "Regra de porta $porta já existente no grupo $sg_id"
+    fi
 }
 
 criarScriptDeInicializacao(){
@@ -189,16 +206,20 @@ criarScriptDeInicializacao
 
 (
     definirParDeChaves "ChaveInstanciaDB" "instancia-db" 
-    SG_ID_DB=$(definirGrupoDeSeguranca "GrupoSegurancaDB" "banco de dados" "db" 3306)
+    SG_ID_DB=$(criarGrupoDeSeguranca "GrupoSegurancaWEB" "Grupo para o site" "$VPC_ID")
+    adicionarRegraAoGrupo "$SG_ID_DB" 80
+    adicionarRegraAoGrupo "$SG_ID_DB" 22
     ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $SG_ID_DB)
-    aws ec2 wait instance-running --instance-ids $ID_WEB
+    aws ec2 wait instance-running --instance-ids $ID_DB
     IP_DB=$(alocarIpElastico $ID_DB)
 ) &
 (
     definirParDeChaves "ChaveInstanciaWEB" "instancia-web" 
-    SG_ID_WEB=$(definirGrupoDeSeguranca "GrupoSegurancaWEB" "site" "web" 80)
+    SG_ID_WEB=$(criarGrupoDeSeguranca "GrupoSegurancaWEB" "Grupo para o site" "$VPC_ID")
+    adicionarRegraAoGrupo "$SG_ID_WEB" 80
+    adicionarRegraAoGrupo "$SG_ID_WEB" 22
     ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $SG_ID_WEB)
-    aws ec2 wait instance-running --instance-ids $ID_DB
+    aws ec2 wait instance-running --instance-ids $ID_WEB
     IP_WEB=$(alocarIpElastico $ID_WEB)
 ) & 
 (
