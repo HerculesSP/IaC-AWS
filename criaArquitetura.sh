@@ -21,7 +21,7 @@ definirParDeChaves(){
         if [ ! -f "$1.pem" ]; then
             aws ec2 delete-key-pair --key-name "$1"
 
-            local APAGAR_DB=$(aws ec2 describe-instances \
+            local APAGAR=$(aws ec2 describe-instances \
                 --filters "Name=tag:Name,Values=$2" \
                     "Name=key-name,Values=$1" \
                     "Name=instance-state-name,Values=running" \
@@ -29,7 +29,7 @@ definirParDeChaves(){
                 --output text)
 
             if [ $? -eq 0 ]; then
-                aws ec2 terminate-instances --instance-ids "$APAGAR_DB"
+                aws ec2 terminate-instances --instance-ids "$APAGAR"
             fi
 
             aws ec2 create-key-pair \
@@ -185,25 +185,29 @@ VPC_ID=$(escolherVPC 0)
 
 SUBNET_ID=$(escolherSubNet)
 
-definirParDeChaves "ChaveInstanciaDB" "instancia-db" 
-definirParDeChaves "ChaveInstanciaWEB" "instancia-web" 
-
-SG_ID_DB=$(definirGrupoDeSeguranca "GrupoSegurancaDB" "banco de dados" "db" 3306)
-SG_ID_WEB=$(definirGrupoDeSeguranca "GrupoSegurancaWEB" "site" "web" 80)
-
 criarScriptDeInicializacao
 
-ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $SG_ID_DB)
-ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $SG_ID_WEB)
-
-aws ec2 wait instance-running --instance-ids $ID_WEB
-aws ec2 wait instance-running --instance-ids $ID_DB
-
+(
+    definirParDeChaves "ChaveInstanciaDB" "instancia-db" 
+    SG_ID_DB=$(definirGrupoDeSeguranca "GrupoSegurancaDB" "banco de dados" "db" 3306)
+    ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $SG_ID_DB)
+    aws ec2 wait instance-running --instance-ids $ID_WEB
+    IP_DB=$(alocarIpElastico $ID_DB)
+) &
+(
+    definirParDeChaves "ChaveInstanciaWEB" "instancia-web" 
+    SG_ID_WEB=$(definirGrupoDeSeguranca "GrupoSegurancaWEB" "site" "web" 80)
+    ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $SG_ID_WEB)
+    aws ec2 wait instance-running --instance-ids $ID_DB
+    IP_WEB=$(alocarIpElastico $ID_WEB)
+) & 
+(
+    criarBucket "black-screen-raw"
+) & 
+(
+    criarBucket "black-screen-trusted"
+) &
+(
+    criarBucket "black-screen-client"
+) & wait
 rm inicializacao.txt
-
-IP_DB=$(alocarIpElastico $ID_DB)
-IP_WEB=$(alocarIpElastico $ID_WEB)
-
-criarBucket "black-screen-raw"
-criarBucket "black-screen-trusted"
-criarBucket "black-screen-client"
