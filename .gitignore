@@ -1,3 +1,2 @@
-ChaveInstanciaDB.pem
-ChaveInstanciaWEB.pem
-inicializacao.txt
+*.pem
+*.txt
