@@ -1,10 +1,10 @@
 #!/bin/bash
-echo "ALERTA: Diversos erros podem aparecer no terminal, ignore-os."
 
 escolherVPC(){
     local vpc_id=$(aws ec2 describe-vpcs \
         --query "Vpcs[$1].VpcId" \
         --output text)
+    echo >&2 "VPC encontrada."
     echo "$vpc_id"
 }
 
@@ -12,24 +12,25 @@ escolherSubNet(){
     local subnet_id=$(aws ec2 describe-subnets \
         --query "Subnets[?VpcId=='$VPC_ID'].[SubnetId]" \
         --output text | head -n1)
+    echo >&2 "Subrede encontrada."
     echo "$subnet_id"
 }
 
 definirParDeChaves(){
-    aws ec2 describe-key-pairs --key-names "$1" --query "KeyPairs[0].KeyName" --output text
+    aws ec2 describe-key-pairs --key-names "$1" --query "KeyPairs[0].KeyName" --output text > /dev/null 2>&1
     if [ $? -eq 0 ]; then
         if [ ! -f "$1.pem" ]; then
-            aws ec2 delete-key-pair --key-name "$1"
-
+            aws ec2 delete-key-pair --key-name "$1" --output text > /dev/null 2>&1
+            echo >&2 "Par de chaves "$1" apagado, pois não se encontra no diretório."
             local APAGAR=$(aws ec2 describe-instances \
                 --filters "Name=tag:Name,Values=$2" \
                     "Name=key-name,Values=$1" \
                     "Name=instance-state-name,Values=running" \
                 --query "Reservations[].Instances[0].InstanceId" \
                 --output text)
-
             if [ $? -eq 0 ]; then
-                aws ec2 terminate-instances --instance-ids "$APAGAR"
+                aws ec2 terminate-instances --instance-ids "$APAGAR" --output text > /dev/null 2>&1
+                echo >&2 "Instância associada ao par de chaves excluido foi apagada."
             fi
 
             aws ec2 create-key-pair \
@@ -37,6 +38,9 @@ definirParDeChaves(){
             --region us-east-1 \
             --query 'KeyMaterial' \
             --output text > "$1.pem"
+            echo >&2 "Novo par de chaves "$1" criado."
+        else 
+            echo >&2 "Par de chaves "$1" já se encontra criado."
         fi
     else
         rm -f "$1.pem"
@@ -45,6 +49,7 @@ definirParDeChaves(){
         --region us-east-1 \
         --query 'KeyMaterial' \
         --output text > "$1.pem"
+        echo >&2 "Novo par de chaves "$1" criado."
     fi 
     chmod 400 "$1.pem"
 }
@@ -53,52 +58,42 @@ criarGrupoDeSeguranca() {
     local nome_grupo="$1"
     local descricao="$2"
     local vpc_id="$3"
+    local tag="$4"
 
-    local sg_id=$(aws ec2 describe-security-groups \
-        --filters "Name=group-name,Values=${nome_grupo}" "Name=vpc-id,Values=${vpc_id}" \
-        --query "SecurityGroups[0].GroupId" \
-        --output text 2>/dev/null)
+    SG_ID=$(aws ec2 describe-security-groups \
+        --query "SecurityGroups[?GroupName=='$nome_grupo'].GroupId" \
+        --output text)
 
-    if [ "$sg_id" == "None" ] || [ -z "$sg_id" ]; then
-        sg_id=$(aws ec2 create-security-group \
-            --group-name "${nome_grupo}" \
-            --description "${descricao}" \
-            --vpc-id "${vpc_id}" \
-            --query "GroupId" \
+    if [ -z "$SG_ID" ] || [ "$SG_ID" = "None" ]; then
+        SG_ID=$(aws ec2 create-security-group \
+            --group-name "$nome_grupo" \
+            --vpc-id "$vpc_id" \
+            --description "$descricao" \
+            --tag-specifications "ResourceType=security-group,Tags=[{Key=Name,Value=sg-$tag}]" \
+            --query 'GroupId' \
             --output text)
-        echo "Grupo de segurança criado: ${sg_id}"
+        echo >&2 "Grupo de segurança "${nome_grupo}" criado: "${SG_ID}""
     else
-        echo "Grupo de segurança existente: ${sg_id}"
+        echo >&2 "Grupo de segurança "${nome_grupo}" existente: "${SG_ID}""
     fi
 
-    echo "$sg_id"
+    echo "$SG_ID"
 }
 
 adicionarRegraAoGrupo() {
     local sg_id="$1"
     local porta="$2"
     local protocolo="${3:-tcp}" 
-
-    local regra_existente=$(aws ec2 describe-security-groups \
-        --group-ids "$sg_id" \
-        --query "SecurityGroups[0].IpPermissions[?FromPort==\`${porta}\` && ToPort==\`${porta}\`].IpRanges[?CidrIp=='0.0.0.0/0'] | [0]" \
-        --output text 2>/dev/null)
-
-    if [ "$regra_existente" == "None" ] || [ -z "$regra_existente" ]; then
-        echo "Adicionando regra de entrada: porta $porta"
-        aws ec2 authorize-security-group-ingress \
-            --group-id "$sg_id" \
-            --ip-permissions "[
-                {
-                    \"IpProtocol\": \"$protocolo\",
-                    \"FromPort\": $porta,
-                    \"ToPort\": $porta,
-                    \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
-                }
-            ]"
-    else
-        echo "Regra de porta $porta já existente no grupo $sg_id"
-    fi
+    aws ec2 authorize-security-group-ingress \
+        --group-id "$sg_id" \
+        --ip-permissions "[
+            {
+                \"IpProtocol\": \"$protocolo\",
+                \"FromPort\": $porta,
+                \"ToPort\": $porta,
+                \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
+            }
+        ]" > /dev/null 2>&1
 }
 
 criarScriptDeInicializacao(){
@@ -127,46 +122,59 @@ EOF
 }
 
 criarInstancia(){
+    local nome="$1"
+    local chave="$2"
+    local ami="$3"
+    local tipo="$4"
+    local grupo="$5"
+
     INSTANCIA_ID=$(aws ec2 describe-instances \
-                    --filters "Name=tag:Name,Values=instancia-$1" \
-                             "Name=key-name,Values=$2" \
+                    --filters "Name=tag:Name,Values=instancia-$nome" \
+                             "Name=key-name,Values=$chave" \
                              "Name=instance-state-name,Values=running" \
                     --query "Reservations[].Instances[0].InstanceId" \
                     --output text)
     
     if [ $? -ne 0 ] || [ -z "$INSTANCIA_ID" ]; then
         INSTANCIA_ID=$(aws ec2 run-instances \
-            --image-id "$3" \
+            --image-id "$ami" \
             --count 1 \
-            --security-group-ids "$5" \
-            --instance-type "$4" \
+            --security-group-ids "$grupo" \
+            --instance-type "$tipo" \
             --subnet-id "$SUBNET_ID" \
             --key-name "$2" \
             --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":20,"VolumeType":"gp3","DeleteOnTermination":true}}]' \
-            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=instancia-$1}]" \
+            --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=instancia-$nome}]" \
             --user-data "file://inicializacao.txt" \
             --query 'Instances[0].InstanceId' \
             --output text
+            echo >&2 "Instância-$nome criada."
         )
+    else 
+        echo >&2 "Já havia a instância-$nome na conta em execução."
     fi
     echo "$INSTANCIA_ID"
 }
 
 alocarIpElastico(){
-    local IP=$(aws ec2 describe-addresses \
-        --query "Addresses[?InstanceId=='$1'].PublicIp" \
+    local instancia="$1"
+    local posicao="$2"
+    local ip=$(aws ec2 describe-addresses \
+        --query "Addresses[?InstanceId=='$instancia'].PublicIp" \
         --output text)
     
-    if [ -n "$IP" ]; then
-        echo "$IP"
+    if [ -n "$ip" ]; then
+        echo >&2 "A instância $2 já possui IP elástico."
+        echo "$ip"
     else
-        local EIP=$(aws ec2 describe-addresses --query "Addresses[?AssociationId==null].PublicIp | [0]" --output text)
-        if [ $? -ne 0 ] || [ "$IP" = "None" ]; then
+        local EIP=$(aws ec2 describe-addresses --query "Addresses[?AssociationId==null].PublicIp | [$posicao]" --output text)
+        if [ $? -eq 0 ] && [ "$ip" = "None" ]; then
             aws ec2 associate-address \
-                --instance-id "$1" \
+                --instance-id "$instancia" \
                 --public-ip "$EIP" \
                 --query 'AssociationId' \
-                --output text
+                --output text > /dev/null 2>&1
+                echo >&2 "Foi associado a instância um IP elático disponível na conta."
         else
             local EIP=$(aws ec2 allocate-address \
                 --domain vpc \
@@ -174,10 +182,11 @@ alocarIpElastico(){
                 --output text)
             
             aws ec2 associate-address \
-                --instance-id "$1" \
+                --instance-id "$instancia" \
                 --public-ip "$EIP" \
                 --query 'AssociationId' \
-                --output text
+                --output text > /dev/null 2>&1
+                echo >&2 "Um novo IP elático elástico foi criado e associado a instância."
             
         fi
         echo "$EIP"
@@ -185,42 +194,50 @@ alocarIpElastico(){
 }
 
 criarBucket(){
-    if ! aws s3api list-buckets --query "Buckets[].Name" --output text | tr '\t' '\n' | grep -q "^$1"; then
+    local nome="$1"
+    if ! aws s3api list-buckets --query "Buckets[].Name" --output text | tr '\t' '\n' | grep -q "^$nome"; then
         while true; do
-            bucket_name="${1}-$(date +%s)"
-            aws s3 mb s3://$bucket_name
+            bucket_name="$nome-$(date +%s)"
+            aws s3 mb s3://$bucket_name > /dev/null 2>&1
             if [ $? -eq 0 ]; then
+            echo >&2 "Bucket "$nome" criado."
                 break
             else
                 sleep 1
             fi
         done
+    else
+        echo >&2 "Já havia o bucket "$nome"."
     fi
 }
 
-VPC_ID=$(escolherVPC 0)
 
-SUBNET_ID=$(escolherSubNet)
 
 criarScriptDeInicializacao
 
 (
+    VPC_ID=$(escolherVPC 0)
+
+    SUBNET_ID=$(escolherSubNet)
     definirParDeChaves "ChaveInstanciaDB" "instancia-db" 
-    SG_ID_DB=$(criarGrupoDeSeguranca "GrupoSegurancaWEB" "Grupo para o site" "$VPC_ID")
-    adicionarRegraAoGrupo "$SG_ID_DB" 80
+    SG_ID_DB=$(criarGrupoDeSeguranca "GrupoSegurancaDB" "Grupo-de-seguranca-db" "$VPC_ID" "db")
+    adicionarRegraAoGrupo "$SG_ID_DB" 3306
     adicionarRegraAoGrupo "$SG_ID_DB" 22
     ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $SG_ID_DB)
     aws ec2 wait instance-running --instance-ids $ID_DB
-    IP_DB=$(alocarIpElastico $ID_DB)
+    IP_DB=$(alocarIpElastico $ID_DB 0)
 ) &
 (
+    VPC_ID=$(escolherVPC 0)
+
+    SUBNET_ID=$(escolherSubNet)
     definirParDeChaves "ChaveInstanciaWEB" "instancia-web" 
-    SG_ID_WEB=$(criarGrupoDeSeguranca "GrupoSegurancaWEB" "Grupo para o site" "$VPC_ID")
+    SG_ID_WEB=$(criarGrupoDeSeguranca "GrupoSegurancaWEB" "Grupo-de-seguranca-web" "$VPC_ID" "web")
     adicionarRegraAoGrupo "$SG_ID_WEB" 80
     adicionarRegraAoGrupo "$SG_ID_WEB" 22
     ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $SG_ID_WEB)
     aws ec2 wait instance-running --instance-ids $ID_WEB
-    IP_WEB=$(alocarIpElastico $ID_WEB)
+    IP_WEB=$(alocarIpElastico $ID_WEB 1)
 ) & 
 (
     criarBucket "black-screen-raw"
