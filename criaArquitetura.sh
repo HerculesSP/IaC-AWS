@@ -84,20 +84,32 @@ adicionarRegraAoGrupo() {
     local sg_id="$1"
     local porta="$2"
     local protocolo="${3:-tcp}" 
-    aws ec2 authorize-security-group-ingress \
-        --group-id "$sg_id" \
-        --ip-permissions "[
-            {
-                \"IpProtocol\": \"$protocolo\",
-                \"FromPort\": $porta,
-                \"ToPort\": $porta,
-                \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
-            }
-        ]" > /dev/null 2>&1
+
+    local regra_existente=$(aws ec2 describe-security-group-rules \
+    --filters Name="group-id",Values="$sg_id" \
+    --query "SecurityGroupRules[?FromPort == \`${porta}\` && ToPort == \`${porta}\` && CidrIpv4 == '0.0.0.0/0']" \
+    --output text)
+
+    if [ "$regra_existente" = "None" ] || [ -z "$regra_existente" ]; then
+        echo "Adicionando regra de entrada: porta $porta"
+        aws ec2 authorize-security-group-ingress \
+            --group-id "$sg_id" \
+            --ip-permissions "[
+                {
+                    \"IpProtocol\": \"$protocolo\",
+                    \"FromPort\": $porta,
+                    \"ToPort\": $porta,
+                    \"IpRanges\": [{\"CidrIp\": \"0.0.0.0/0\"}]
+                }
+            ]" \
+            --output text > /dev/null 2>&1
+    else
+        echo "Regra de porta $porta já existente no grupo $sg_id"
+    fi
 }
 
 criarScriptDeInicializacao(){
-    cat << EOF > inicializacao.txt
+    cat << EOF > ./tmp/inicializacao.txt
 #!/bin/bash
 
 apt-get update -y
@@ -145,13 +157,13 @@ criarInstancia(){
             --key-name "$2" \
             --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":20,"VolumeType":"gp3","DeleteOnTermination":true}}]' \
             --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=instancia-$nome}]" \
-            --user-data "file://inicializacao.txt" \
+            --user-data "file://./temp/inicializacao.txt" \
             --query 'Instances[0].InstanceId' \
             --output text
             echo >&2 "Instância-$nome criada."
         )
     else 
-        echo >&2 "Já havia a instância-$nome na conta em execução."
+        echo >&2 "Já havia a instância-$INSTANCIA_ID na conta em execução."
     fi
     echo "$INSTANCIA_ID"
 }
@@ -164,11 +176,11 @@ alocarIpElastico(){
         --output text)
     
     if [ -n "$ip" ]; then
-        echo >&2 "A instância $2 já possui IP elástico."
+        echo >&2 "A instância $instancia já possui IP elástico."
         echo "$ip"
     else
-        local EIP=$(aws ec2 describe-addresses --query "Addresses[?AssociationId==null].PublicIp | [$posicao]" --output text)
-        if [ $? -eq 0 ] && [ "$ip" = "None" ]; then
+        local EIP=$(aws ec2 describe-addresses --query "Addresses[?AssociationId==null].PublicIp | [$2]" --output text)
+        if [ $? -eq 0 ]; then
             aws ec2 associate-address \
                 --instance-id "$instancia" \
                 --public-ip "$EIP" \
@@ -211,33 +223,39 @@ criarBucket(){
     fi
 }
 
-
+mkdir tmp
 
 criarScriptDeInicializacao
 
-(
-    VPC_ID=$(escolherVPC 0)
+TEMP_FILE_DB="./tmp/ID_DB.txt"
+TEMP_FILE_WEB="./tmp/ID_WEB.txt"
+TEMP_FILE_JAVA="./tmp/ID_JAVA.txt"
 
-    SUBNET_ID=$(escolherSubNet)
+trap 'rm -f tmp; echo "Arquivos temporários apagados."' EXIT
+
+VPC_ID=$(escolherVPC 0)
+(
     definirParDeChaves "ChaveInstanciaDB" "instancia-db" 
     SG_ID_DB=$(criarGrupoDeSeguranca "GrupoSegurancaDB" "Grupo-de-seguranca-db" "$VPC_ID" "db")
     adicionarRegraAoGrupo "$SG_ID_DB" 3306
     adicionarRegraAoGrupo "$SG_ID_DB" 22
     ID_DB=$(criarInstancia "db" "ChaveInstanciaDB" "ami-0360c520857e3138f" "t3.small" $SG_ID_DB)
-    aws ec2 wait instance-running --instance-ids $ID_DB
-    IP_DB=$(alocarIpElastico $ID_DB 0)
+    echo "$ID_DB" > "$TEMP_FILE_DB"
 ) &
 (
-    VPC_ID=$(escolherVPC 0)
-
-    SUBNET_ID=$(escolherSubNet)
     definirParDeChaves "ChaveInstanciaWEB" "instancia-web" 
     SG_ID_WEB=$(criarGrupoDeSeguranca "GrupoSegurancaWEB" "Grupo-de-seguranca-web" "$VPC_ID" "web")
     adicionarRegraAoGrupo "$SG_ID_WEB" 80
     adicionarRegraAoGrupo "$SG_ID_WEB" 22
     ID_WEB=$(criarInstancia "web" "ChaveInstanciaWEB" "ami-0360c520857e3138f" "t3.small" $SG_ID_WEB)
-    aws ec2 wait instance-running --instance-ids $ID_WEB
-    IP_WEB=$(alocarIpElastico $ID_WEB 1)
+    echo "$ID_WEB" > "$TEMP_FILE_WEB"
+) & 
+(
+    definirParDeChaves "ChaveInstanciaJAVA" "instancia-java" 
+    SG_ID_JAVA=$(criarGrupoDeSeguranca "GrupoSegurancaJAVA" "Grupo-de-seguranca-java" "$VPC_ID" "jar")
+    adicionarRegraAoGrupo "$SG_ID_JAVA" 22
+    ID_JAVA=$(criarInstancia "java" "ChaveInstanciaJAVA" "ami-0360c520857e3138f" "t3.small" $SG_ID_JAVA)
+    echo "$ID_JAVA" > "$TEMP_FILE_JAVA"
 ) & 
 (
     criarBucket "black-screen-raw"
@@ -248,4 +266,21 @@ criarScriptDeInicializacao
 (
     criarBucket "black-screen-client"
 ) & wait
-rm inicializacao.txt
+
+ID_DB=$(cat "$TEMP_FILE_DB")
+ID_WEB=$(cat "$TEMP_FILE_WEB")
+ID_JAVA=$(cat "$TEMP_FILE_JAVA")
+
+(
+    aws ec2 wait instance-running --instance-ids $ID_WEB
+    IP_WEB=$(alocarIpElastico $ID_WEB 0)
+) &
+(
+    aws ec2 wait instance-running --instance-ids $ID_JAVA
+    IP_JAVA=$(alocarIpElastico $ID_JAVA 1)
+) &
+(
+    aws ec2 wait instance-running --instance-ids $ID_DB
+    IP_DB=$(alocarIpElastico $ID_DB 2)
+) & wait
+
