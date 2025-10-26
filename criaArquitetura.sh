@@ -302,7 +302,7 @@ IP_JAVA=$(cat "$TEMP_FILE_IP_JAVA")
     AWS_SESSION_TOKEN=$(aws configure get aws_session_token --profile default)
 
     echo "Configurando o ambiente da instância WEB"
-    ssh -i ChaveInstanciaWEB.pem -o StrictHostKeyChecking=no ubuntu@$IP_WEB 'bash -s' -- $IP_DB $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY $AWS_SESSION_TOKEN $RAW < ./scriptsConfiguracao/inicializacaoWEB.sh
+    ssh -i ChaveInstanciaWEB.pem -o StrictHostKeyChecking=no ubuntu@$IP_WEB 'bash -s' -- $IP_DB $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY $AWS_SESSION_TOKEN $RAW < ./scriptsConfiguracao/inicializacaoWEB.sh > /dev/null 2>&1
 ) &
 (
     echo "Configurando o ambiente da instância JAVA"
@@ -310,7 +310,10 @@ IP_JAVA=$(cat "$TEMP_FILE_IP_JAVA")
 ) &
 (
    echo "Configurando o ambiente da instância DB"
-   ssh -i ChaveInstanciaDB.pem -o StrictHostKeyChecking=no ubuntu@$IP_DB 'bash -s' < ./scriptsConfiguracao/inicializacaoDB.sh
+   ssh -i ChaveInstanciaDB.pem -o StrictHostKeyChecking=no ubuntu@$IP_DB 'bash -s' < ./scriptsConfiguracao/inicializacaoDB.sh > /dev/null 2>&1
+) & 
+(
+    sed -i "s|^IpAplicacao=.*|IpAplicacao=\"$IP_WEB\"|" ../Black-Scrip-Python/.env
 ) & wait
 ENDTIME=$(date +%s)
 echo "O script levou $(($ENDTIME - $STARTTIME)) segundos para ser concluído."
