@@ -302,7 +302,7 @@ IP_JAVA=$(cat "$TEMP_FILE_IP_JAVA")
     AWS_SESSION_TOKEN=$(aws configure get aws_session_token --profile default)
 
     echo "Configurando o ambiente da instância WEB"
-    #ssh -i ChaveInstanciaWEB.pem -o StrictHostKeyChecking=no ubuntu@$IP_WEB 'bash -s' -- $IP_DB $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY $AWS_SESSION_TOKEN $RAW < ./scriptsConfiguracao/inicializacaoWEB.sh
+    ssh -i ChaveInstanciaWEB.pem -o StrictHostKeyChecking=no ubuntu@$IP_WEB 'bash -s' -- $IP_DB $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY $AWS_SESSION_TOKEN $RAW < ./scriptsConfiguracao/inicializacaoWEB.sh
 ) &
 (
     echo "Configurando o ambiente da instância JAVA"
