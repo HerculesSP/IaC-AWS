@@ -4,7 +4,7 @@ escolherVPC(){
     local vpc_id=$(aws ec2 describe-vpcs \
         --query "Vpcs[$1].VpcId" \
         --output text)
-    echo >&2 "VPC encontrada."
+    echo >&2 "VPC encontrada"
     echo "$vpc_id"
 }
 
@@ -12,7 +12,7 @@ escolherSubNet(){
     local subnet_id=$(aws ec2 describe-subnets \
         --query "Subnets[?VpcId=='$VPC_ID'].[SubnetId]" \
         --output text | head -n1)
-    echo >&2 "Subrede encontrada."
+    echo >&2 "Subrede encontrada"
     echo "$subnet_id"
 }
 
@@ -21,7 +21,7 @@ definirParDeChaves(){
     if [ $? -eq 0 ]; then
         if [ ! -f "$1.pem" ]; then
             aws ec2 delete-key-pair --key-name "$1" --output text > /dev/null 2>&1
-            echo >&2 "Par de chaves "$1" apagado, pois não se encontra no diretório."
+            echo >&2 "Par de chaves "$1" apagado, pois não se encontra no diretório"
             local APAGAR=$(aws ec2 describe-instances \
                 --filters "Name=tag:Name,Values=$2" \
                     "Name=key-name,Values=$1" \
@@ -30,7 +30,8 @@ definirParDeChaves(){
                 --output text)
             if [ $? -eq 0 ]; then
                 aws ec2 terminate-instances --instance-ids "$APAGAR" --output text > /dev/null 2>&1
-                echo >&2 "Instância associada ao par de chaves excluido foi apagada."
+                echo >&2 "Instância associada ao par de chaves excluido foi apagada"
+                sleep 15
             fi
 
             aws ec2 create-key-pair \
@@ -38,9 +39,9 @@ definirParDeChaves(){
             --region us-east-1 \
             --query 'KeyMaterial' \
             --output text > "$1.pem"
-            echo >&2 "Novo par de chaves "$1" criado."
+            echo >&2 "Novo par de chaves "$1" criado"
         else 
-            echo >&2 "Par de chaves "$1" já se encontra criado."
+            echo >&2 "Par de chaves "$1" já se encontra criado"
         fi
     else
         rm -f "$1.pem"
@@ -49,7 +50,7 @@ definirParDeChaves(){
         --region us-east-1 \
         --query 'KeyMaterial' \
         --output text > "$1.pem"
-        echo >&2 "Novo par de chaves "$1" criado."
+        echo >&2 "Novo par de chaves "$1" criado"
     fi 
     chmod 400 "$1.pem"
 }
@@ -92,7 +93,7 @@ adicionarRegraAoGrupo() {
     --output text)
 
     if [ -z "$regra_existente" ] || [ "$regra_existente" = "None" ]; then
-        echo "Adicionando regra de entrada: porta $porta"
+        echo "Adicionando regra de entrada: porta $porta para o IP $ip"
         aws ec2 authorize-security-group-ingress \
             --group-id "$sg_id" \
             --ip-permissions "[
@@ -105,7 +106,7 @@ adicionarRegraAoGrupo() {
             ]" \
             --output text > /dev/null 2>&1
     else
-        echo "Regra de porta $porta já existente no grupo $sg_id"
+        echo "Regra de porta $porta no IP $ip já existe no grupo $sg_id"
     fi
 }
 
@@ -156,8 +157,8 @@ alocarIpElastico(){
         echo >&2 "A instância $instancia já possui IP elástico."
         echo "$ip"
     else
-        local EIP=$(aws ec2 describe-addresses --query "Addresses[?AssociationId==null].PublicIp | [$2]" --output text)
-        if [ -z "$EIP" ]; then
+        local EIP=$(aws ec2 describe-addresses --query "Addresses[?AssociationId==null].PublicIp | [$posicao]" --output text)
+        if [ -n "$EIP" ] && [ "$EIP" != "None" ]; then
             aws ec2 associate-address \
                 --instance-id "$instancia" \
                 --public-ip "$EIP" \
@@ -184,21 +185,28 @@ alocarIpElastico(){
 
 criarBucket(){
     local nome="$1"
-    if ! aws s3api list-buckets --query "Buckets[].Name" --output text | tr '\t' '\n' | grep -q "^$nome"; then
-        while true; do
-            bucket_name="$nome-$(date +%s)"
-            aws s3 mb s3://$bucket_name > /dev/null 2>&1
-            if [ $? -eq 0 ]; then
-            echo >&2 "Bucket "$nome" criado."
-                break
-            else
-                sleep 1
-            fi
-        done
-    else
-        echo >&2 "Já havia o bucket "$nome"."
+    
+    local full_name=$(aws s3api list-buckets --query "Buckets[].Name" --output text | tr '\t' '\n' | grep "^$nome-[0-9]\{10\}" | head -n 1)
+    if [ -n "$full_name" ]; then
+        echo >&2 "Já havia o bucket \"$full_name\"."
+        echo "$full_name"
+        return
     fi
+    while true; do
+        full_name="$nome-$(date +%s)"
+        aws s3 mb s3://$full_name > /dev/null 2>&1
+        if [ $? -eq 0 ]; then
+            echo >&2 "Bucket \"$full_name\" criado."
+            break
+        else
+            sleep 1
+        fi
+    done
+
+    echo "$full_name"
 }
+
+
 
 STARTTIME=$(date +%s)
 
@@ -211,6 +219,9 @@ TEMP_FILE_SG_DB="./tmp/SG_DB.txt"
 TEMP_FILE_IP_DB="./tmp/IP_DB.txt"
 TEMP_FILE_IP_WEB="./tmp/IP_WEB.txt"
 TEMP_FILE_IP_JAVA="./tmp/IP_JAVA.txt"
+TEMP_FILE_RAW="./tmp/RAW.txt"
+TEMP_FILE_TRUSTED="./tmp/TRUSTED.txt"
+TEMP_FILE_CLIENT="./tmp/CLIENT.txt"
 
 trap 'rm -r -f tmp; echo "Arquivos temporários apagados."' EXIT
 
@@ -239,30 +250,38 @@ VPC_ID=$(escolherVPC 0)
     echo "$ID_JAVA" > "$TEMP_FILE_ID_JAVA"
 ) & 
 (
-    criarBucket "black-screen-raw"
+    RAW=$(criarBucket "black-screen-raw")
+    echo "$RAW" > "$TEMP_FILE_RAW"
 ) & 
 (
-    criarBucket "black-screen-trusted"
+    TRUSTED=$(criarBucket "black-screen-trusted")
+    echo "$TRUSTED" > "$TEMP_FILE_TRUSTED"
 ) &
 (
-    criarBucket "black-screen-client"
+    CLIENT=$(criarBucket "black-screen-client")
+    echo "$CLIENT" > "$TEMP_FILE_CLIENT"
 ) & wait
 
 ID_DB=$(cat "$TEMP_FILE_ID_DB")
 ID_WEB=$(cat "$TEMP_FILE_ID_WEB")
 ID_JAVA=$(cat "$TEMP_FILE_ID_JAVA")
 SG_DB=$(cat "$TEMP_FILE_SG_DB")
+RAW=$(cat "$TEMP_FILE_RAW")
+TRUSTED=$(cat "$TEMP_FILE_TRUSTED")
+CLIENT=$(cat "$TEMP_FILE_CLIENT")
 
 (
+    sleep 0.1
     IP_WEB=$(alocarIpElastico $ID_WEB 0)
     echo "$IP_WEB" > "$TEMP_FILE_IP_WEB"
 ) &
 (
+    sleep 0.3
     IP_JAVA=$(alocarIpElastico $ID_JAVA 1)
     echo "$IP_JAVA" > "$TEMP_FILE_IP_JAVA"
 ) &
-(
-    IP_DB=$(alocarIpElastico $ID_DB 2)
+(   sleep 0.5
+    IP_DB=$(alocarIpElastico $ID_DB 0)
     echo "$IP_DB" > "$TEMP_FILE_IP_DB"
 ) & wait
 
@@ -277,5 +296,21 @@ IP_JAVA=$(cat "$TEMP_FILE_IP_JAVA")
     adicionarRegraAoGrupo "$SG_DB" 3306 "tcp" "${IP_JAVA}/32"
 ) & wait
 
+(
+    AWS_ACCESS_KEY_ID=$(aws configure get aws_access_key_id --profile default)
+    AWS_SECRET_ACCESS_KEY=$(aws configure get aws_secret_access_key --profile default)
+    AWS_SESSION_TOKEN=$(aws configure get aws_session_token --profile default)
+
+    echo "Configurando o ambiente da instância WEB"
+    #ssh -i ChaveInstanciaWEB.pem -o StrictHostKeyChecking=no ubuntu@$IP_WEB 'bash -s' -- $IP_DB $AWS_ACCESS_KEY_ID $AWS_SECRET_ACCESS_KEY $AWS_SESSION_TOKEN $RAW < ./scriptsConfiguracao/inicializacaoWEB.sh
+) &
+(
+    echo "Configurando o ambiente da instância JAVA"
+    #ssh -i ChaveInstanciaJAVA.pem -o StrictHostKeyChecking=no ubuntu@$IP_JAVA 'bash -s' -- $IP_DB < ./scriptsConfiguracao/inicializacaoJAVA.sh
+) &
+(
+   echo "Configurando o ambiente da instância DB"
+   ssh -i ChaveInstanciaDB.pem -o StrictHostKeyChecking=no ubuntu@$IP_DB 'bash -s' < ./scriptsConfiguracao/inicializacaoDB.sh
+) & wait
 ENDTIME=$(date +%s)
 echo "O script levou $(($ENDTIME - $STARTTIME)) segundos para ser concluído."
