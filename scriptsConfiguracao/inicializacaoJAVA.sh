@@ -1,4 +1,5 @@
 #!/bin/bash
+IP_DB=$1
 sudo apt-get update -y
 sudo apt-get install -y ca-certificates curl
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -17,3 +18,9 @@ sudo groupadd docker
 sudo usermod -aG docker $USER
 
 newgrp docker
+
+
+git clone https://github.com/Black-Screenn/Black-Screen-Java.git
+ 
+docker create --name ETL -v ./Black-Screen:/java openjdk:21 java -jar /java/bucket-s3-1.0-SNAPSHOT-jar-with-dependencies.jar "$IP_DB"
+

@@ -20,121 +20,137 @@ newgrp docker
 
 cat << EOF > script.sql
 
-use BlackScreen;
+USE BlackScreen;
 
-SET time_zone = 'America/Sao_Paulo';
-SET NAMES 'utf8mb4';
-ALTER DATABASE BlackScreen CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
-
-create table empresa (
-    idEmpresa int not null auto_increment,
-    nome varchar(45) not null,
-    cnpj char(14) not null,
-    primary key (idEmpresa),
-    unique key (cnpj) 
+CREATE TABLE Enderecos (
+    Id_Endereco INT AUTO_INCREMENT PRIMARY KEY,
+    Cep VARCHAR(9),
+    Pais VARCHAR(255),
+    Cidade VARCHAR(255),
+    UF VARCHAR(255),
+    Logradouro VARCHAR(255),
+    Numero INT,
+    Latitude DECIMAL(10,8),
+    Longitude DECIMAL(11,8),
+    Bairro VARCHAR(100),
+    Complemento VARCHAR(200)
 );
 
-create table usuario (
-    idUsuario int primary key auto_increment,
-    nome varchar(50) not null,
-    senha varchar(45) not null,
-    email varchar(64) not null,
-    fkEmpresa int not null,
-    foreign key (fkEmpresa) references empresa (idEmpresa),
-    unique key (email)
+CREATE TABLE Empresa (
+    Id_Empresa INT AUTO_INCREMENT PRIMARY KEY ,
+    Nome_Empresa VARCHAR(255),
+    Cnpj VARCHAR(255) UNIQUE,
+    Fk_Endereco INT,
+    CONSTRAINT FK_Empresa_Endereco
+        FOREIGN KEY (Fk_Endereco) REFERENCES Enderecos(Id_Endereco)
 );
 
-create table caixas (
-    idCaixa int auto_increment primary key,
-    codigoCaixa varchar(12) not null,
-    fkEmpresa int not null,
-    foreign key (fkEmpresa) references empresa (idEmpresa),
-    unique key (codigoCaixa) 
+CREATE TABLE Cargo (
+    Id_Cargo INT AUTO_INCREMENT PRIMARY KEY,
+    Nome_Cargo VARCHAR(255) NOT NULL,
+    Fk_Empresa INT,
+    CONSTRAINT FK_Cargo_Empresa
+        FOREIGN KEY (Fk_Empresa) REFERENCES Empresa(Id_Empresa)
 );
 
-create table endereco (
-    idEndereco int primary key auto_increment,
-    cep char(9) not null,
-    logradouro varchar(200) not null,
-    numero varchar(20),
-    complemento varchar(200),
-    bairro varchar(100) not null,
-    cidade varchar(100) not null,
-    uf varchar(100) not null,
-    pais varchar(100) not null,
-    latitude float,
-    longitude float,
-    fkCaixa int not null,
-    foreign key (fkCaixa) references caixas (idCaixa),
-    unique key (fkCaixa) 
+CREATE TABLE Usuario (
+    Id_Usuario INT AUTO_INCREMENT PRIMARY KEY,
+    Nome VARCHAR(255),
+    Email VARCHAR(255) UNIQUE,
+    Senha VARCHAR(255),
+    Fk_Empresa INT,
+    Fk_Cargo INT, 
+    CONSTRAINT FK_Usuario_Empresa
+        FOREIGN KEY (Fk_Empresa) REFERENCES Empresa(Id_Empresa),
+    CONSTRAINT FK_Usuario_Cargo 
+        FOREIGN KEY (Fk_Cargo) REFERENCES Cargo(Id_Cargo)
 );
 
-create table p_alerta (
-    idDesempenho int auto_increment primary key,
-    parametro float not null,                    
-    fkCaixa int not null,                        
-    foreign key (fkCaixa) references caixas (idCaixa)
+CREATE TABLE Caixa (
+    Id_Caixa INT AUTO_INCREMENT PRIMARY KEY,  
+    codigoCaixa VARCHAR(12) UNIQUE,
+    Fk_Endereco_Maquina INT,
+    Fk_Empresa INT,
+    CONSTRAINT FK_Caixa_Endereco
+        FOREIGN KEY (Fk_Endereco_Maquina) REFERENCES Enderecos(Id_Endereco),
+    CONSTRAINT FK_Caixa_Empresa
+        FOREIGN KEY (Fk_Empresa) REFERENCES Empresa(Id_Empresa)
 );
 
-create table componentes(
-    idComponente int auto_increment primary key,
-    unidade varchar(20),
-    componente varchar(20),
-    fkCaixa int not null,
-    foreign key (fkCaixa) references caixas (idCaixa)
+CREATE TABLE Componentes (
+    Id_Componente INT AUTO_INCREMENT PRIMARY KEY not null,
+    Nome_Componente VARCHAR(255) not null,
+    Fk_Caixa INT not null,
+    Unidade VARCHAR(20),
+    CONSTRAINT FK_Componentes_Caixa
+        FOREIGN KEY (Fk_Caixa) REFERENCES Caixa(Id_Caixa) 
 );
 
-create table componente_alerta (
-  idComponenteAlerta int auto_increment primary key,
-  fkComponente int not null,
-  fkParametro int not null,
-  foreign key (fkComponente) references componentes(idComponente),
-  foreign key (fkParametro) references p_alerta(idDesempenho),
-  unique key (fkComponente, fkParametro) 
+CREATE TABLE Parametros (
+    Id_Parametro INT AUTO_INCREMENT PRIMARY KEY,
+    Valor_Parametrizado INT not null,
+    Fk_Componente INT,
+    CONSTRAINT FK_Parametros_Componentes
+        FOREIGN KEY (Fk_Componente) REFERENCES Componentes(Id_Componente)
 );
 
-insert into empresa (nome, cnpj) values
-('BlackScreen', '12345678000199'),
-('SafeBank Systems', '98765432000177'),
-('CaixaProtegida Ltda', '11122233000155');
+CREATE TABLE Permissao (
+    Id_Permissao INT AUTO_INCREMENT PRIMARY KEY,
+    Nome_Permissao VARCHAR(255) NOT NULL UNIQUE,
+    Descricao_Permissao VARCHAR(255)
+);
 
-insert into usuario (nome, senha, email, fkEmpresa) values
-('Pedro Amaral', 'senha123', 'pedro@blackscreen.com', 1),
-('Vitorio Bearari', 'senha456', 'vitorio@safebank.com', 2),
-('Hanieh Ashouri', 'senha789', 'hanieh@caixaprotegida.com', 3);
+CREATE TABLE CargoPermissao (
+    Fk_Cargo INT NOT NULL,
+    Fk_Permissao INT NOT NULL,
+    CONSTRAINT PK_CargoPermissao 
+        PRIMARY KEY (Fk_Cargo, Fk_Permissao),
+    CONSTRAINT FK_CargoPermissao_Cargo
+        FOREIGN KEY (Fk_Cargo) REFERENCES Cargo(Id_Cargo),
+    CONSTRAINT FK_CargoPermissao_Permissao
+        FOREIGN KEY (Fk_Permissao) REFERENCES Permissao(Id_Permissao)
+);
 
-insert into caixas (codigoCaixa, fkEmpresa) values
-('CX001', 1),
-('CX002', 1),
-('CX101', 2),
-('CX201', 3);
+INSERT INTO Enderecos (Cep, Pais, Cidade, UF, Logradouro, Numero, Latitude, Longitude, Bairro, Complemento) VALUES
+('01001-000', 'Brasil', 'São Paulo', 'SP', 'Av. Paulista', 1000, -7.948196, -34.890172, 'Bela Vista', 'Térreo'),
+('02020-000', 'Brasil', 'São Paulo', 'SP', 'Rua Vergueiro', 200, -7.937091, -34.857388, 'Liberdade', 'Sala 2'),
+('03030-000', 'Brasil', 'Curitiba', 'PR', 'Rua XV de Novembro', 300, -7.954592, -34.952316, 'Centro', NULL),
+('04040-000', 'Brasil', 'Rio de Janeiro', 'RJ', 'Av. Atlântica', 400, -5.853801, -36.210938, 'Copacabana', 'Quiosque 5');
 
-insert into endereco (cep, logradouro, numero, complemento, bairro, cidade, uf, fkCaixa, latitude, longitude, pais) values
-('01001-000', 'Av. Paulista', '1000', 'Térreo', 'Bela Vista', 'São Paulo', 'SP', 1, -7.948196, -34.890172, "Brasil"),
-('02020-000', 'Rua Vergueiro', '200', 'Sala 2', 'Liberdade', 'São Paulo', 'SP', 2, -7.937091, -34.857388, "Brasil"),
-('03030-000', 'Rua XV de Novembro', '300', null, 'Centro', 'Curitiba', 'PR', 3, -7.954592, -34.952316, "Brasil"),
-('04040-000', 'Av. Atlântica', '400', 'Quiosque 5', 'Copacabana', 'Rio de Janeiro', 'RJ', 4, -5.853801, -36.210938, "Brasil");
+INSERT INTO Empresa (Nome_Empresa, Cnpj, Fk_Endereco) VALUES
+('BlackScreen', '12345678000199', 1),
+('SafeBank Systems', '98765432000177', 2),
+('CaixaProtegida Ltda', '11122233000155', 3);
 
-insert into p_alerta (parametro, fkCaixa) values
-(75.5, 1),
-(60.0, 1),
-(80.0, 2),
-(55.0, 3),
-(90.0, 4);
+INSERT INTO Cargo (Nome_Cargo, Fk_Empresa) VALUES
+('Administrador', 1),
+('Administrador', 2),
+('Administrador', 3);
 
-insert into componentes (unidade, componente, fkCaixa) values
-('%', 'CPU', 1),
-('%', 'Disco', 1),
-('%', 'Memória', 2),
-('%', 'CPU', 3),
-('%', 'Memória', 4);
+INSERT INTO Usuario (Nome, Senha, Email, Fk_Empresa, Fk_Cargo) VALUES
+('Pedro Amaral', 'senha123', 'pedro@blackscreen.com', 1, 1),
+('Vitorio Bearari', 'senha456', 'vitorio@safebank.com', 2, 2),
+('Hanieh Ashouri', 'senha789', 'hanieh@caixaprotegida.com', 3, 3);
 
-insert into componente_alerta (fkComponente, fkParametro) values
-(1, 1), 
-(2, 2), 
-(3, 3), 
-(4, 4),
-(5, 5); 
+INSERT INTO Caixa (codigoCaixa, Fk_Empresa, Fk_Endereco_Maquina) VALUES
+('CX001', 1, 1),
+('CX002', 1, 2),
+('CX101', 2, 3),
+('CX201', 3, 4);
+
+INSERT INTO Componentes (Nome_Componente, Unidade, Fk_Caixa) VALUES
+('CPU', '%', 1),
+('Disco', '%', 1),
+('Memória', '%', 2),
+('CPU', '%', 3),
+('Memória', '%', 4);
+
+INSERT INTO Parametros (Valor_Parametrizado, Fk_Componente) VALUES
+(75, 1),
+(60, 2),
+(80, 3),
+(55, 4),
+(90, 5);
 
 EOF
 docker pull mysql:8.0.37

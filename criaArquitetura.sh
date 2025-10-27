@@ -306,7 +306,7 @@ IP_JAVA=$(cat "$TEMP_FILE_IP_JAVA")
 ) &
 (
     echo "Configurando o ambiente da instância JAVA"
-    #ssh -i ChaveInstanciaJAVA.pem -o StrictHostKeyChecking=no ubuntu@$IP_JAVA 'bash -s' -- $IP_DB < ./scriptsConfiguracao/inicializacaoJAVA.sh
+    ssh -i ChaveInstanciaJAVA.pem -o StrictHostKeyChecking=no ubuntu@$IP_JAVA 'bash -s' -- $IP_DB < ./scriptsConfiguracao/inicializacaoJAVA.sh > /dev/null 2>&1
 ) &
 (
    echo "Configurando o ambiente da instância DB"
